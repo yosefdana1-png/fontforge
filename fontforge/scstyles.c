@@ -4028,6 +4028,10 @@ static void SCEmbolden(SplineChar *sc, struct lcg_zones *zones, int layer) {
     DBounds old, new;
     int adjust_counters;
 
+    /* A (near) zero stroke width is a no-op, and stroking with it crashes */
+    if ( fabs(zones->stroke_width) < 0.02 )
+return;
+
     InitializeStrokeInfo(&si);
     si.stroke_type = si_round;
     SITranslatePSArgs(&si, lj_miter, lc_square);

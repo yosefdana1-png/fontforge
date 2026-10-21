@@ -1301,7 +1301,7 @@ static RefChar *InterpRefs(RefChar *base, RefChar *other, real amount, SplineCha
 	    *cur = *base;
 	    cur->orig_pos = cur->sc->orig_pos;
 	    for ( i=0; i<6; ++i )
-		cur->transform[i] = base->transform[i] + amount*(other->transform[i]-base->transform[i]);
+		cur->transform[i] = base->transform[i] + amount*(test->transform[i]-base->transform[i]);
 	    cur->layers = NULL;
 	    cur->layer_cnt = 0;
 	    cur->checked = false;
@@ -1325,7 +1325,7 @@ static void InterpPoint(SplineSet *cur, SplinePoint *base, SplinePoint *other, r
                                        base->me.y + amount*(other->me.y-base->me.y));
     int order2 = base->prev!=NULL ? base->prev->order2 : base->next!=NULL ? base->next->order2 : false;
 
-    if ( !( order2 && base->prev!=NULL && (base->prev->islinear || other->prev->islinear) ) ) {
+    if ( !( order2 && base->prev!=NULL && (base->prev->islinear || (other->prev!=NULL && other->prev->islinear)) ) ) {
 	p->prevcp.x = base->prevcp.x + amount*(other->prevcp.x-base->prevcp.x);
 	p->prevcp.y = base->prevcp.y + amount*(other->prevcp.y-base->prevcp.y);
 	if ( order2 && cur->first!=NULL ) {
@@ -1336,7 +1336,7 @@ static void InterpPoint(SplineSet *cur, SplinePoint *base, SplinePoint *other, r
 	    cur->last->nextcp.y = p->prevcp.y = (cur->last->nextcp.y+p->prevcp.y)/2;
 	}
     }
-    if ( ! ( order2 && base->next!=NULL && (base->next->islinear || other->next->islinear ) ) ) {
+    if ( ! ( order2 && base->next!=NULL && (base->next->islinear || (other->next!=NULL && other->next->islinear) ) ) ) {
 	p->nextcp.x = base->nextcp.x + amount*(other->nextcp.x-base->nextcp.x);
 	p->nextcp.y = base->nextcp.y + amount*(other->nextcp.y-base->nextcp.y);
     }

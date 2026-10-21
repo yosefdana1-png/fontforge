@@ -545,6 +545,13 @@ int ExportImage(char* filename, SplineChar* sc, int layer, int format,
     void* freetypecontext;
     double emsize = sc->parent->ascent + sc->parent->descent;
 
+    if ((bitsperpixel != 1 && bitsperpixel != 2 && bitsperpixel != 4 &&
+         bitsperpixel != 8) || pixelsize <= 0) {
+        fprintf(stderr, "Invalid bit depth (%d) or pixel size (%d) for image export.\n",
+                bitsperpixel, pixelsize);
+        return false;
+    }
+
     if (autohint_before_generate && sc->changedsincelasthinted &&
         !sc->manualhints)
         SplineCharAutoHint(sc, layer, NULL);

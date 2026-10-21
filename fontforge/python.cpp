@@ -184,11 +184,26 @@ static wchar_t *copy_to_wide_string(const char *s) {
     wchar_t *ws;
 
     ws = NULL;
+#ifdef __APPLE__
+    /* macOS arguments and file names are always UTF-8, but apps started */
+    /*  from the Finder run in the C locale, where mbstowcs would garble */
+    /*  every non-ASCII path (e.g. Hebrew folder names) */
+    unichar_t *us = utf82u_copy(s);
+    if (us != NULL) {
+        size_t i;
+        n = u_strlen(us) + 1;
+        ws = (wchar_t *)calloc(n, sizeof(wchar_t));
+        for (i = 0; i < n; ++i)
+            ws[i] = (wchar_t) us[i];
+        free(us);
+    }
+#else
     n = mbstowcs(NULL, s, 0) + 1;
     if (n != (size_t) -1) {
         ws = (wchar_t *)calloc(n, sizeof(wchar_t));
         mbstowcs(ws, s, n);
     }
+#endif
     return ws;
 }
 
@@ -502,6 +517,11 @@ static SplineChar* PyFF_Glyph_GetSC(PyFF_Glyph *glyph) {
 	PyErr_SetString(PyExc_RuntimeError, "Glyph object is not valid, the font may have been closed" );
 	return NULL;
     }
+
+    // The glyph's active layer may have been removed (del font.layers[n]),
+    // fall back to the foreground rather than indexing past the layers
+    if (glyph->layer >= ((SplineChar *)glyph->sc_opaque)->layer_cnt)
+	glyph->layer = ly_fore;
 
     return (SplineChar *)glyph->sc_opaque;
 }
@@ -2980,8 +3000,30 @@ static int PyFFContour_SubAssign( PyObject *self, PyObject *key, PyObject *val )
 #endif
     if ( !(step == 1 || step == -1) ) {
 	PyErr_Format(PyExc_IndexError, "Only supported steps are 1 and -1");
+	PyFFContour_dealloc(rpl);
 	return( -1 );
     }
+    if ( step == -1 ) {
+	/* The shifting code below only handles contiguous forward slices, */
+	/*  so turn a reversed slice into the equivalent forward one and */
+	/*  reverse the replacement points instead */
+	if ( rpl->pt_cnt != len ) {
+	    PyErr_Format(PyExc_ValueError, "attempt to assign sequence of size %d to extended slice of size %d",
+		    (int) rpl->pt_cnt, (int) len);
+	    PyFFContour_dealloc(rpl);
+	    return( -1 );
+	}
+	for ( i=0; i<rpl->pt_cnt/2; ++i ) {
+	    PyFF_Point *tmp = rpl->points[i];
+	    rpl->points[i] = rpl->points[rpl->pt_cnt-1-i];
+	    rpl->points[rpl->pt_cnt-1-i] = tmp;
+	}
+	start = start-len+1;
+	end = start+len;
+	step = 1;
+    }
+    if ( end<start )
+	end = start;	/* empty slice: insert at start, as Python lists do */
 
     diff = ( rpl!=NULL ? rpl->pt_cnt : 0 ) - len;
     for ( i=start; i<end; ++i )
@@ -3202,8 +3244,10 @@ static PyObject *PyFFContour_InsertPoint(PyFF_Contour *self, PyObject *args) {
 	    PyErr_Clear();
 	    if ( !PyArg_ParseTuple( args, "(dd)|i", &x, &y, &pos )) {
 		PyErr_Clear();
-		if ( !PyArg_ParseTuple( args, "O|i", &p, &pos ) ||
-		     !PyType_IsSubtype(&PyFF_PointType, Py_TYPE(p)) ) {
+		if ( !PyArg_ParseTuple( args, "O|i", &p, &pos ) )
+		    return( NULL );
+		if ( !PyType_IsSubtype(&PyFF_PointType, Py_TYPE(p)) ) {
+		    PyErr_Format(PyExc_TypeError, "Expected a point or a coordinate tuple" );
 		    return( NULL );
 		}
 	    }
@@ -5676,11 +5720,14 @@ return( layer );
 extern PyTypeObject PyFF_GlyphPenType;
 
 static void PyFF_GlyphPen_dealloc(PyFF_GlyphPen *self) {
+    PyObject *etype, *evalue, *etb;
+    PyErr_Fetch(&etype, &evalue, &etb);	/* don't clobber a pending exception */
     SplineChar *sc = PyFF_Glyph_GetSC(self->glyph);
     if ( sc!=NULL ) {
-	if ( self->changed )
+	if ( self->changed && self->layer<sc->layer_cnt )
 	    SCCharChangedUpdate(sc,self->layer);
     }
+    PyErr_Restore(etype, evalue, etb);
     Py_XDECREF(self->glyph);
     Py_TYPE(self)->tp_free((PyObject *) self);
 }
@@ -5697,6 +5744,15 @@ static PyObject *PyFFGlyphPen_Str(PyFF_GlyphPen *self) {
 /* ************************************************************************** */
 /*  GlyphPen Methods  */
 /* ************************************************************************** */
+static SplineChar *PyFF_GlyphPen_GetSC(PyFF_GlyphPen *self) {
+    SplineChar *sc = PyFF_Glyph_GetSC(self->glyph);
+    if ( sc!=NULL && self->layer>=sc->layer_cnt ) {
+	PyErr_Format(PyExc_ValueError, "The pen's layer no longer exists" );
+	return NULL;
+    }
+    return sc;
+}
+
 static void GlyphClear(PyFF_GlyphPen *self) {
     SplineChar *sc = PyFF_Glyph_GetSC(self->glyph);
     if (sc == NULL) {
@@ -5707,7 +5763,7 @@ static void GlyphClear(PyFF_GlyphPen *self) {
 }
 
 static PyObject *PyFFGlyphPen_moveTo(PyFF_GlyphPen *self, PyObject *args) {
-    SplineChar *sc = PyFF_Glyph_GetSC(self->glyph);
+    SplineChar *sc = PyFF_GlyphPen_GetSC(self);
     if (sc == NULL) {
 	return NULL;
     }
@@ -5738,7 +5794,7 @@ Py_RETURN( self );
 }
 
 static PyObject *PyFFGlyphPen_lineTo(PyFF_GlyphPen *self, PyObject *args) {
-    SplineChar *sc = PyFF_Glyph_GetSC(self->glyph);
+    SplineChar *sc = PyFF_GlyphPen_GetSC(self);
     if (sc == NULL) {
 	return NULL;
     }
@@ -5765,7 +5821,7 @@ Py_RETURN( self );
 }
 
 static PyObject *PyFFGlyphPen_curveTo(PyFF_GlyphPen *self, PyObject *args) {
-    SplineChar *sc = PyFF_Glyph_GetSC(self->glyph);
+    SplineChar *sc = PyFF_GlyphPen_GetSC(self);
     if (sc == NULL) {
 	return NULL;
     }
@@ -5803,7 +5859,7 @@ Py_RETURN( self );
 }
 
 static PyObject *PyFFGlyphPen_qCurveTo(PyFF_GlyphPen *self, PyObject *args) {
-    SplineChar *sc = PyFF_Glyph_GetSC(self->glyph);
+    SplineChar *sc = PyFF_GlyphPen_GetSC(self);
     if (sc == NULL) {
 	return NULL;
     }
@@ -5905,7 +5961,7 @@ Py_RETURN( self );
 }
 
 static PyObject *PyFFGlyphPen_closePath(PyFF_GlyphPen *self, PyObject *UNUSED(args)) {
-    SplineChar *sc = PyFF_Glyph_GetSC(self->glyph);
+    SplineChar *sc = PyFF_GlyphPen_GetSC(self);
     if (sc == NULL) {
 	return NULL;
     }
@@ -5946,7 +6002,7 @@ Py_RETURN( self );
 }
 
 static PyObject *PyFFGlyphPen_addComponent(PyFF_GlyphPen *self, PyObject *args) {
-    SplineChar *sc = PyFF_Glyph_GetSC(self->glyph);
+    SplineChar *sc = PyFF_GlyphPen_GetSC(self);
     if (sc == NULL) {
 	return NULL;
     }
@@ -6760,6 +6816,9 @@ PyTypeObject PyFF_MathKernType = {
 /* ************************************************************************** */
 
 static void PyFF_Glyph_dealloc(PyFF_Glyph *self) {
+    /* Don't let a stale active layer make PyFF_Glyph_GetSC fail here */
+    if ( self->sc_opaque!=NULL && self->layer>=((SplineChar *) self->sc_opaque)->layer_cnt )
+	self->layer = ly_fore;
     SplineChar *sc = PyFF_Glyph_GetSC(self);
     if (sc != NULL) {
 	/* This case should not be possible, since PyFF_Glyph is refcounted as
@@ -6958,9 +7017,12 @@ static int PyFF_Glyph_set_activeLayer(PyFF_Glyph *self, SplineChar *sc, PyObject
 	    return -1;
 	}
 	layer = SFFindLayerIndexByName(sc->parent,name);
-	if ( layer<0 )
+	if ( layer<0 ) {
+	    PyErr_Format(PyExc_ValueError, "Requested layer '%s' not found", name);
 return( -1 );
+	}
     } else {
+	PyErr_Format(PyExc_TypeError, "Layer must be a string or a layer index");
         return -1;
     }
     if ( layer<0 || layer>=sc->layer_cnt ) {
@@ -8923,6 +8985,11 @@ static PyObject *PyFFGlyph_export(PyObject *self, PyObject *args,
 	if ( !PyArg_ParseTuple(args,"s|OO",&filename,&obj1,&obj2) )
 	    return NULL;
     }
+    if ( layerobj!=NULL ) {
+	layer = LayerArgToLayer(sc->parent, layerobj);
+	if ( layer==ly_none )
+	    return NULL;
+    }
     locfilename = utf82def_copy(filename);
 
     if ( use_system || ask_system ) {
@@ -8946,6 +9013,7 @@ static PyObject *PyFFGlyph_export(PyObject *self, PyObject *args,
 	    if ( PyLong_Check(obj1) ) {
 		pixels = PyLong_AsLong(obj1);
 	    } else {
+		PyErr_Format(PyExc_TypeError, "Pixel size must be an integer" );
 		free(locfilename);
 		return NULL;
 	    }
@@ -8954,9 +9022,20 @@ static PyObject *PyFFGlyph_export(PyObject *self, PyObject *args,
 	    if ( PyLong_Check(obj2) ) {
 		bits = PyLong_AsLong(obj2);
 	    } else {
+		PyErr_Format(PyExc_TypeError, "Bit depth must be an integer" );
 		free(locfilename);
 		return NULL;
 	    }
+	}
+	if ( pixels<=0 || (bits!=1 && bits!=2 && bits!=4 && bits!=8) ) {
+	    PyErr_Format(PyExc_ValueError, "Pixel size must be positive and bit depth must be 1, 2, 4 or 8" );
+	    free(locfilename);
+return( NULL );
+	}
+	if ( layer<0 || layer>=sc->layer_cnt ) {
+	    PyErr_Format(PyExc_ValueError, "Layer is out of range" );
+	    free(locfilename);
+return( NULL );
 	}
 	if ( !ExportImage(locfilename,sc,layer,format,pixels,bits)) {
 	    PyErr_Format(PyExc_EnvironmentError, "Could not create image file \"%s\"", locfilename );
@@ -10452,10 +10531,23 @@ return( NULL );
 	for ( i=0; i<len2; ++i )
 	    PyTuple_SetItem(ret,len1+i,Py_BuildValue("i",memushort(c2->cvt->data,c2->cvt->len,i*sizeof(uint16_t))) );
     } else {
-	for ( i=0; i<len2; ++i )
-	    PyTuple_SetItem(ret,len1+i,Py_BuildValue("i",PySequence_GetItem(_c2,i)));
+	for ( i=0; i<len2; ++i ) {
+	    PyObject *item = PySequence_GetItem(_c2,i);
+	    long val;
+	    if ( item==NULL ) {
+		Py_DECREF(ret);
+return( NULL );
+	    }
+	    val = PyLong_AsLong(item);
+	    Py_DECREF(item);
+	    if ( val==-1 && PyErr_Occurred()) {
+		Py_DECREF(ret);
+return( NULL );
+	    }
+	    PyTuple_SetItem(ret,len1+i,Py_BuildValue("i",(int) val));
+	}
     }
-Py_RETURN( (PyObject *) ret );
+return( ret );
 }
 
 static PyObject *PyFFCvt_InPlaceConcat( PyObject *_self, PyObject *_c2 ) {
@@ -10485,10 +10577,11 @@ return( NULL );
     if ( (len1+len2)*2 >= cvt->maxlen )
 	cvt->data = (uint8_t *)realloc(cvt->data,cvt->maxlen = 2*(len1+len2)+10 );
     if ( is_cvt2 ) {
-	if ( len2!=0 )
+	if ( len2!=0 ) {
 	    if ( CheckIfFontClosed(c2->font) )
 		return( NULL );
 	    memcpy(cvt->data+len1*sizeof(uint16_t),c2->cvt->data, 2*len2);
+	}
     } else {
 	for ( i=0; i<len2; ++i ) {
 	    int val = PyLong_AsLong(PySequence_GetItem(_c2,i));
@@ -10530,10 +10623,10 @@ return( -1 );
 	PyErr_Format(PyExc_TypeError, "Index out of bounds");
 return( -1 );
     }
-    if ( 2*pos>=cvt->maxlen )
+    if ( 2*pos+2>cvt->maxlen )
 	cvt->data = (uint8_t *)realloc(cvt->data,cvt->maxlen = sizeof(uint16_t)*pos+10 );
     if ( 2*pos>=cvt->len )
-	cvt->len = sizeof(uint16_t)*pos;
+	cvt->len = sizeof(uint16_t)*(pos+1);
     memputshort(cvt->data,sizeof(uint16_t)*pos,val);
 return( 0 );
 }

@@ -657,7 +657,7 @@ return( CVAddUndo(cv,undo));
 
 Undoes *CVPreserveStateHints(CharViewBase *cv) {
     Undoes *undo = CVPreserveState(cv);
-    if ( CVLayer(cv)==ly_fore ) {
+    if ( undo!=NULL && CVLayer(cv)==ly_fore ) {
 	undo->undotype = ut_statehint;
 	undo->u.state.hints = UHintCopy(cv->sc,true);
 	undo->u.state.instrs = (uint8_t*) copyn((char*) cv->sc->ttf_instrs, cv->sc->ttf_instrs_len);
