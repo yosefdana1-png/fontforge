@@ -654,11 +654,19 @@ return( pos );
 }
 
 static void CounterHints1(GrowBuf *gb, SplineChar *sc, int round) {
-    real hints[HntMax*2+2];		/* At most 96 hints, no hint used more than once */
-    int pos, i, j;
+    real *hints;
+    int pos, i, j, scnt;
+    StemInfo *h;
 
     if ( sc->countermask_cnt==0 )
 return;
+
+    /* A hint may be used in several counter masks, so the space needed is */
+    /*  not bounded by HntMax. Allocate enough for every stem in every mask */
+    scnt = 0;
+    for ( h=sc->hstem; h!=NULL; h=h->next ) ++scnt;
+    for ( h=sc->vstem; h!=NULL; h=h->next ) ++scnt;
+    hints = malloc((2*scnt*sc->countermask_cnt+2)*sizeof(real));
 
     pos = FigureCounters(sc->hstem,hints,0,0,sc->countermask_cnt,
 	    sc->countermasks);
@@ -669,8 +677,10 @@ return;
     /*  have been. */
     pos = FigureCounters(sc->vstem,hints,pos,sc->lsidebearing,sc->countermask_cnt,
 	    sc->countermasks);
-    if ( pos==2 )	/* => no counters, one byte to say 0 h counters, one byte for 0 v counters */
+    if ( pos==2 ) {	/* => no counters, one byte to say 0 h counters, one byte for 0 v counters */
+	free(hints);
 return;
+    }
     for ( i=pos; i>22; i-=22 ) {
 	for ( j=i-22; j<i; ++j )
 	    AddNumber(gb,hints[j],round);
@@ -689,6 +699,7 @@ return;
 	GrowBuffer(gb);
     *(gb->pt)++ = 12;
     *(gb->pt)++ = 16;		/* CallOtherSubr */
+    free(hints);
 }
 
 static void SubrsCheck(struct pschars *subrs) {

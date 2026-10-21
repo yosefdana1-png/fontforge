@@ -812,6 +812,7 @@ return( NULL );
 						// fprintf(stderr, "Duplicate glyph.\n");
             memmove(glyphs+i, glyphs+i+1, (cnt-i)*sizeof(SplineChar *));
             --cnt;
+            --i;	/* Recheck this position, there may be more than two copies */
         }
 	glyphs[cnt] = NULL;
 return( glyphs );
@@ -1699,6 +1700,13 @@ static void dumpgposkernclass(FILE *gpos,SplineFont *sf,
     fseek(gpos,pos,SEEK_SET);
     dumpcoveragetable(gpos,glyphs);
 
+    /* All offsets in this subtable (device tables, class defs, coverage) */
+    /*  are 16 bit. We do not split kerning class subtables, so if the */
+    /*  coverage table starts beyond 64K, the offsets written above are bad */
+    if ( pos-begin_off>65535 || next_devtab>65535 )
+	LogError(_("Lookup subtable %s contains a kerning class (%d first classes x %d second classes) which is too big (more than 64K bytes) for a single subtable. The GPOS table will be bad. Please split the kerning class into several subtables.\n"),
+		sub->subtable_name, kc->first_cnt, kc->second_cnt );
+
     free(glyphs);
     free(class1);
     free(class2);
@@ -2276,6 +2284,33 @@ return( false );
 return( strncmp(sc->name,names,pt-names)==0 );
 }
 
+static int NameListCnt(char *names) {
+    /* Count the (non-empty) glyph names in a space separated list */
+    int cnt = 0;
+    char *pt;
+
+    if ( names==NULL )
+return( 0 );
+    for ( pt=names; *pt; ) {
+	while ( *pt==' ' ) ++pt;
+	if ( *pt=='\0' )
+    break;
+	++cnt;
+	while ( *pt!=' ' && *pt!='\0' ) ++pt;
+    }
+return( cnt );
+}
+
+static int NameListAllInFont(SplineFont *sf,char *names) {
+    /* Are all the glyphs named in the list going to be output? */
+    SplineChar **glyphs = TTFGlyphsFromNames(sf,names);
+    int cnt;
+
+    for ( cnt=0; glyphs[cnt]!=NULL; ++cnt );
+    free(glyphs);
+return( cnt==NameListCnt(names) );
+}
+
 static int CntRulesStartingWith(FPST *fpst,SplineChar *sc) {
     int i, cnt;
 
@@ -2327,7 +2362,17 @@ static void dumpg___ContextChainGlyphs(FILE *lfile,SplineFont *sf,
 	for ( j=0; j<subcnt; ++j )
 	    putshort(lfile,0);
 	for ( j=k=0; k<fpst->rule_cnt; ++k ) if ( NamesStartWith(glyphs[i],fpst->rules[k].u.glyph.names )) {
-	    uint32_t subpos = ftell(lfile);
+	    uint32_t subpos;
+	    if ( !NameListAllInFont(sf,fpst->rules[k].u.glyph.names) ||
+		    (!iscontext && (!NameListAllInFont(sf,fpst->rules[k].u.glyph.back) ||
+				    !NameListAllInFont(sf,fpst->rules[k].u.glyph.fore))) ) {
+		/* Dropping just the missing glyph would shift the sequence */
+		/*  positions of the lookups, so drop the whole rule */
+		LogError(_("A rule in lookup subtable %s refers to glyphs which are not in the font, the rule has been omitted\n"),
+			sub->subtable_name );
+	continue;
+	    }
+	    subpos = ftell(lfile);
 	    fseek(lfile,pos+(1+j)*sizeof(short),SEEK_SET);
 	    putshort(lfile,subpos-pos);
 	    fseek(lfile,subpos,SEEK_SET);
@@ -2377,6 +2422,13 @@ static void dumpg___ContextChainGlyphs(FILE *lfile,SplineFont *sf,
 		}
 	    ++j;
 	    if ( curcontext>maxcontext ) maxcontext = curcontext;
+	}
+	if ( j!=subcnt ) {
+	    /* Some rules were omitted, fix up the rule count */
+	    uint32_t endpos = ftell(lfile);
+	    fseek(lfile,pos,SEEK_SET);
+	    putshort(lfile,j);
+	    fseek(lfile,endpos,SEEK_SET);
 	}
     }
     free(glyphs);

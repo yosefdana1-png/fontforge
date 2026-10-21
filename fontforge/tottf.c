@@ -1563,6 +1563,11 @@ return( i );
 	for ( pt=str; *pt; ++pt )
 	    putc(*pt,at->sidf);
     }
+    if ( str!=NULL && at->sidcnt+nStdStrings==65536 ) {
+	/* SIDs and the String INDEX count are 16 bit quantities */
+	LogError(_("Too many strings for the CFF String INDEX (more than 65535 SIDs), the font will be bad\n"));
+	at->error = true;
+    }
 return( at->sidcnt++ + nStdStrings );
 }
 
@@ -1863,8 +1868,15 @@ static void dumpcffencoding(SplineFont *sf,struct alltabs *at) {
     at->gn_sid = NULL;
 }
 
-static void _dumpcffstrings(FILE *file, struct pschars *strs) {
+static int _dumpcffstrings(FILE *file, struct pschars *strs) {
     int i, len, offsize;
+    int ret = true;
+
+    if ( strs->next>65535 ) {
+	/* The INDEX count is a 16 bit quantity */
+	LogError(_("Too many entries (%d) for a CFF INDEX (limit is 65535), the font will be bad\n"), strs->next );
+	ret = false;
+    }
 
     /* First figure out the offset size */
     len = 1;
@@ -1892,6 +1904,7 @@ static void _dumpcffstrings(FILE *file, struct pschars *strs) {
 	    }
 	}
     }
+return( ret );
 }
 
 static FILE *dumpcffstrings(struct pschars *strs) {
@@ -2575,7 +2588,8 @@ static int dumptype2glyphs(SplineFont *sf,struct alltabs *at) {
 return( false );
     dumpcffprivate(sf,at,-1,subrs->next);
     if ( subrs->next!=0 )
-	_dumpcffstrings(at->private_file,subrs);
+	if ( !_dumpcffstrings(at->private_file,subrs))
+	    at->error = true;
     ff_progress_next_stage();
     at->charstrings = dumpcffstrings(chrs);
     PSCharsFree(subrs);
@@ -2620,10 +2634,12 @@ return( false );
     for ( i=0; i<sf->subfontcnt; ++i ) {
 	dumpcffprivate(sf->subfonts[i],at,i,at->fds[i].subrs->next);
 	if ( at->fds[i].subrs->next!=0 )
-	    _dumpcffstrings(at->fds[i].private_file,at->fds[i].subrs);
+	    if ( !_dumpcffstrings(at->fds[i].private_file,at->fds[i].subrs))
+		at->error = true;
 	PSCharsFree(at->fds[i].subrs);
     }
-    _dumpcffstrings(at->globalsubrs,glbls);
+    if ( !_dumpcffstrings(at->globalsubrs,glbls))
+	at->error = true;
     PSCharsFree(glbls);
 
     dumpcffheader(at->cfff);
@@ -4087,6 +4103,27 @@ static void dumppost(struct alltabs *at, SplineFont *sf, enum fontformat format)
 
     at->post = GFileTmpfile();
 
+    if ( !shorttable ) {
+	/* post format 2 stores custom name indices (258+n) in 16 bits. If there */
+	/*  are too many non-standard names, fall back to format 3 (no names) */
+	for ( i=0, pos=0; i<at->maxp.numGlyphs; ++i ) {
+	    if ( at->gi.bygid[i]!=-1 && sf->glyphs[at->gi.bygid[i]]!=NULL ) {
+		SplineChar *sc = sf->glyphs[at->gi.bygid[i]];
+		if ( strcmp(sc->name,".notdef")!=0 ) {
+		    for ( j=0; j<258; ++j )
+			if ( strcmp(sc->name,ttfstandardnames[j])==0 )
+		    break;
+		    if ( j==258 )
+			++pos;
+		}
+	    }
+	}
+	if ( pos+258>65535 ) {
+	    LogError(_("Too many non-standard glyph names (%d) for a format 2 'post' table, glyph names will be omitted (format 3)\n"), pos );
+	    shorttable = true;
+	}
+    }
+
     putlong(at->post,shorttable?0x00030000:0x00020000);	/* formattype */
     putfixed(at->post,sf->italicangle);
     putshort(at->post,sf->upos+sf->uwidth/2);		/* 'post' defn says top of rect, while FontInfo def says center of rect */
@@ -4787,7 +4824,7 @@ return( NULL );			/* No variation selectors */
     for ( i=0; i<vs_cnt; ++i ) {
 	memset(avail,0,unicode4_size*sizeof(uint32_t));
 	any = 0;
-	for ( gid=mingid; gid<=maxgid; ++gid ) if ( (sc=sf->glyphs[gid])!=NULL ) {
+	for ( gid=mingid; gid<=maxgid; ++gid ) if ( (sc=sf->glyphs[gid])!=NULL && sc->ttf_glyph!=-1 ) {
 	    for ( altuni = sc->altuni; altuni!=NULL; altuni=altuni->next ) {
 		if ( altuni->unienc!=-1 && altuni->unienc < (int)unicode4_size &&
 			altuni->vs==vses[i] && altuni->fid==0 ) {
@@ -4836,7 +4873,7 @@ return( NULL );			/* No variation selectors */
 	    putlong(format14,cnt);
 	    for ( j=0; (unsigned)j<unicode4_size; ++j ) if ( avail[j]&vs_nondefault ) {
 		putu24(format14,j);
-		putshort(format14,sf->glyphs[avail[j]&0xffff]->ttf_glyph);
+		putshort(format14,sf->glyphs[avail[j]&0xffffff]->ttf_glyph);
 	    }
 	}
     }

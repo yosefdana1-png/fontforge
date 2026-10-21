@@ -2987,21 +2987,24 @@ static int _OTfmSplineFont(FILE *tfm, SplineFont *sf,EncMap *map,int maxc,int la
 	strcat(full,"-Enc");
 	encname = full;
     }
-    header.encoding[0] = strlen(encname);
-    if ( header.encoding[0]>39 ) {
+    /* Check the length before storing it in a (signed) char */
+    if ( strlen(encname)>=39 ) {
 	header.encoding[0] = 39;
 	memcpy(header.encoding+1,encname,39);
-    } else
+    } else {
+	header.encoding[0] = strlen(encname);
 	strcpy(header.encoding+1,encname);
+    }
     if ( full ) free(full);
 
     familyname = sf->cidmaster ? sf->cidmaster->familyname : sf->familyname;
-    header.family[0] = strlen(familyname);
-    if ( header.family[0]>=19 ) {
+    if ( strlen(familyname)>=19 ) {
 	header.family[0] = 19;
 	memcpy(header.family+1,familyname,19);
-    } else
+    } else {
+	header.family[0] = strlen(familyname);
 	strcpy(header.family+1,familyname);
+    }
     for ( i=128; i<map->enccount && i<maxc; ++i )
 	if ( map->map[i]!=-1 && SCWorthOutputting(sf->glyphs[map->map[i]]))
     break;

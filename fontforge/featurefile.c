@@ -434,7 +434,7 @@ static void dump_kernclass(FILE *out,SplineFont *sf,struct lookup_subtable *sub)
     }
     for ( i=0; i<kc->first_cnt; ++i ) if ( kc->firsts[i]!=NULL ) {
 	for ( j=0; j<kc->second_cnt; ++j ) if ( kc->seconds[j]!=NULL ) {
-	    if ( kc->offsets[i*kc->second_cnt+j]!=0 && kernclass_for_feature_file(sf, kc, kc->offsets_flags ? kc->offsets_flags[i] : 0) )
+	    if ( kc->offsets[i*kc->second_cnt+j]!=0 && kernclass_for_feature_file(sf, kc, kc->offsets_flags ? kc->offsets_flags[i*kc->second_cnt+j] : 0) )
 		fprintf( out, "    pos @kc%d_first_%d @kc%d_second_%d %d;\n",
 			sub->subtable_offset, i,
 			sub->subtable_offset, j,
@@ -2860,7 +2860,7 @@ return( copy( test->glyphs) );
 	    for ( sames=mtest; sames!=NULL; sames=sames->same ) {
 		strcpy(pt,sames->glyphs);
 		pt += strlen(pt);
-		if ( sames->next!=NULL )
+		if ( sames->same!=NULL )
 		    *pt++ = ' ';
 	    }
 return( ret );
