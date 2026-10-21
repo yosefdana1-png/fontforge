@@ -1489,8 +1489,37 @@ static void GGDKDrawSetVisible(GWindow w, int show) {
             GGDKDrawSetTransientFor((GWindow)gw, (GWindow) - 1);
         }
     } else {
+#ifdef GDK_WINDOWING_QUARTZ
+        // When a FontForge window is hidden or closed, macOS does not know
+        // which of our other windows should become active, and often hands
+        // the focus to the Finder instead. So pass it on ourselves: to the
+        // window this one belonged to, else to the most recently used one.
+        GGDKWindow focus_to = NULL;
+        bool was_active = gw->is_toplevel && !gw->is_popup && _GGDKDrawCocoa_AppIsActive();
+        if (was_active) {
+            focus_to = gw->transient_owner;
+        }
+#endif
         GGDKDrawSetTransientFor((GWindow)gw, NULL);
         gdk_window_hide(gw->w);
+#ifdef GDK_WINDOWING_QUARTZ
+        if (was_active) {
+            if (focus_to == NULL || focus_to->is_dying || !focus_to->is_visible) {
+                focus_to = NULL;
+                for (GList_Glib *pw = gw->display->mru_windows->head; pw != NULL; pw = pw->next) {
+                    GGDKWindow tw = (GGDKWindow)pw->data;
+                    if (tw != gw && !tw->is_dying && tw->is_visible) {
+                        focus_to = tw;
+                        break;
+                    }
+                }
+            }
+            if (focus_to != NULL) {
+                gdk_window_focus(focus_to->w, GDK_CURRENT_TIME);
+                _GGDKDrawCocoa_ActivateApp();
+            }
+        }
+#endif
     }
 }
 

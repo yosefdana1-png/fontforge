@@ -56,3 +56,11 @@ void _GGDKDrawCocoa_SetClipboardText(const char *text) {
     [pb setString:ns_clip forType:NSStringPboardType];
     [ns_clip release];
 }
+
+int _GGDKDrawCocoa_AppIsActive(void) {
+    return [NSApp isActive];
+}
+
+void _GGDKDrawCocoa_ActivateApp(void) {
+    [NSApp activateIgnoringOtherApps:YES];
+}

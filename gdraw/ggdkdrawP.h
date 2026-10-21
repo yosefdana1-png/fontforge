@@ -330,6 +330,8 @@ int  GGDKDrawLayoutLineStart(GWindow w, int l);
 
 char *_GGDKDrawCocoa_GetClipboardText(void);
 void _GGDKDrawCocoa_SetClipboardText(const char *text);
+int _GGDKDrawCocoa_AppIsActive(void);
+void _GGDKDrawCocoa_ActivateApp(void);
 
 // END functions in ggdkcocoa.m
 
