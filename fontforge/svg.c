@@ -1365,6 +1365,7 @@ static SplineSet *SVGParsePath(xmlChar *path) {
     current.x = current.y = 0;
 
     while ( *path ) {
+	xmlChar *iter_start = path;
 	while ( *path==' ' ) ++path;
         if ( isalpha(*path)) {
             type = *path++;
@@ -1556,11 +1557,11 @@ static SplineSet *SVGParsePath(xmlChar *path) {
 		end = skipcomma(end);
 		while (isspace(*end)) ++end;
 		large_arc = *end != '0';
-		end++;
+		if ( *end ) end++;
 		end = skipcomma(end);
 		while (isspace(*end)) ++end;
 		sweep = *end != '0';
-		end++;
+		if ( *end ) end++;
 		end = skipcomma(end);
 		x = strtod(end,&end);
 		end = skipcomma(end);
@@ -1573,10 +1574,15 @@ static SplineSet *SVGParsePath(xmlChar *path) {
 	      break;
 	      default:
 		LogError( _("Unknown type '%c' found in path specification"), type );
+		end = (char *) path;
 	      break;
 	    }
 	}
 	path = (xmlChar *) skipcomma(end);
+	if ( path==iter_start ) {
+	    LogError( _("Unparseable data found in path specification") );
+    break;
+	}
     }
 return( head );
 }
@@ -1835,15 +1841,21 @@ return( NULL );
     cur = chunkalloc(sizeof(SplineSet));
     cur->first = cur->last = SplinePointCreate(x,y);
     while ( *end ) {
+	char *start = end;
 	x = strtod(end,&end);
 	while ( isspace(*end) || *end==',' ) ++end;
 	y = strtod(end,&end);
 	while ( isspace(*end)) ++end;
+	if ( end==start ) {
+	    LogError( _("Unparseable data found in points specification") );
+    break;
+	}
 	sp = SplinePointCreate(x,y);
 	SplineMake(cur->last,sp,false);
 	cur->last = sp;
     }
-    if ( isgon ) {
+    xmlFree(pts);
+    if ( isgon && cur->first!=cur->last ) {
 	if ( RealNear(cur->last->me.x,cur->first->me.x) &&
 		RealNear(cur->last->me.y,cur->first->me.y) ) {
 	    cur->first->prev = cur->last->prev;
@@ -2586,6 +2598,12 @@ static void SVGFigureStyle(struct svg_state *st,char *name,
     }
 }
 
+/* Guards against self referencing <use>/clip-path elements */
+#define SVG_MAX_DEPTH	64
+#define SVG_MAX_USE	100000
+static int svg_parse_depth = 0;
+static int svg_use_count = 0;
+
 static Entity *_SVGParseSVG(xmlNodePtr svg, xmlNodePtr top,
 	struct svg_state *inherit) {
     struct svg_state st;
@@ -2699,7 +2717,14 @@ return( NULL );
 	    null_state.isvisible = true;
 	    null_state.transform[0] = null_state.transform[3] = 1;
 	    clip->name = (xmlChar *) "g";
-	    eret = _SVGParseSVG(clip,top,&null_state);
+	    if ( svg_parse_depth>=SVG_MAX_DEPTH ) {
+		LogError(_("SVG elements nested too deeply (recursive reference?)"));
+		eret = NULL;
+	    } else {
+		++svg_parse_depth;
+		eret = _SVGParseSVG(clip,top,&null_state);
+		--svg_parse_depth;
+	    }
 	    clip->name = temp;
 	    if ( eret!=NULL && eret->type == et_splines ) {
 		st.clippath = eret->u.splines.splines;
@@ -2718,7 +2743,13 @@ return( NULL );
 	    xmlStrcmp(svg->name,(xmlChar *) "g")==0 ) {
 	ehead = elast = NULL;
 	for ( kid = svg->children; kid!=NULL; kid=kid->next ) {
+	    if ( svg_parse_depth>=SVG_MAX_DEPTH ) {
+		LogError(_("SVG elements nested too deeply (recursive reference?)"));
+	break;
+	    }
+	    ++svg_parse_depth;
 	    eret = _SVGParseSVG(kid,top,&st);
+	    --svg_parse_depth;
 	    if ( eret!=NULL ) {
 		if ( elast==NULL )
 		    ehead = eret;
@@ -2738,6 +2769,11 @@ return( ehead );
 	if ( name!=NULL && *name=='#' ) {	/* Within this file */
 	    kid = XmlFindID(top,(char *) name+1);
 	    treat_symbol_as_g = true;
+	}
+	if ( kid!=NULL && ++svg_use_count>SVG_MAX_USE ) {
+	    if ( svg_use_count==SVG_MAX_USE+1 )
+		LogError(_("Too many <use> references (recursive reference?)"));
+	    kid = NULL;
 	}
 	SVGuseTransform(&st,svg,kid);
 	svg = kid;
@@ -2877,6 +2913,8 @@ static Entity *SVGParseSVG(xmlNodePtr svg,int em_size,int ascent,bool scale,Spli
 	    }
 	}
     }
+    svg_parse_depth = 0;
+    svg_use_count = 0;
 return( _SVGParseSVG(svg,svg,&st));
 }
 

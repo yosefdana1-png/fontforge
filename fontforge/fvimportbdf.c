@@ -584,8 +584,10 @@ static int slurp_header(FILE *bdf, int *_as, int *_ds, Encoding **_enc,
 		    if ( point_size<0 ) point_size = -point_size;
 		}
 	    } else {
-		if ( *buf!='\0' && !isdigit(*buf))
-		    strcpy(family,buf);
+		if ( *buf!='\0' && !isdigit(*buf)) {
+		    strncpy(family,buf,99);
+		    family[99]='\0';
+		}
 	    }
 	} else if ( strcmp(tok,"SIZE")==0 ) {
 	    int junk;
@@ -862,7 +864,7 @@ return( -2 );
     *mods = '\0';
     pt = strrchr(filename, '/');
     if ( pt==NULL ) pt = filename; else ++pt;
-    for ( fpt=family; isalpha(*pt);)
+    for ( fpt=family; isalpha(*pt) && fpt<family+99;)	/* family is char[100] */
 	*fpt++ = *pt++;
     *fpt = '\0';
     strcpy(full,family);
@@ -1069,7 +1071,7 @@ return( -2 );
     *mods = '\0';
     pt = strrchr(filename, '/');
     if ( pt==NULL ) pt = filename; else ++pt;
-    for ( fpt=family; isalpha(*pt);)
+    for ( fpt=family; isalpha(*pt) && fpt<family+99;)	/* family is char[100] */
 	*fpt++ = *pt++;
     *fpt = '\0';
     strcpy(full,family);
@@ -1463,7 +1465,11 @@ return(-2);
     if ( (format&PCF_FORMAT_MASK)!=PCF_DEFAULT_FORMAT )
 return(-2);
     cnt = getformint32(file,format);
+    if ( cnt<0 || cnt>0x100000 )
+return(-2);
     props = malloc(cnt*sizeof(struct props));
+    if ( props==NULL )
+return(-2);
     for ( i=0; i<cnt; ++i ) {
 	props[i].name_offset = getformint32(file,format);
 	props[i].isStr = getc(file);
@@ -1472,12 +1478,24 @@ return(-2);
     if ( cnt&3 )
 	fseek(file,4-(cnt&3),SEEK_CUR);
     strl = getformint32(file,format);
-    strs = malloc(strl+1);
-    strs[strl]=0;
+    if ( strl<0 || strl>0x10000000 ) {
+	free(props);
+return(-2);
+    }
+    strs = calloc(strl+1,1);
+    if ( strs==NULL ) {
+	free(props);
+return(-2);
+    }
     fread(strs,1,strl,file);
     for ( i=0; i<cnt; ++i ) {
+	/* Offsets out of range point at the terminating NUL (empty string) */
+	if ( props[i].name_offset<0 || props[i].name_offset>strl )
+	    props[i].name_offset = strl;
 	props[i].name = strs+props[i].name_offset;
-	if ( props[i].isStr )
+	if ( props[i].isStr && (props[i].val<0 || props[i].val>strl) )
+	    props[i].value = strs+strl;
+	else if ( props[i].isStr )
 	    props[i].value = strs+props[i].val;
 	else
 	    props[i].value = NULL;
@@ -1494,12 +1512,16 @@ return(-2);
 	if ( props[i].isStr ) {
 	    dummy->props[i].u.str = copy(props[i].value);
 	    dummy->props[i].type  = prt_string | prt_property;
-	    if ( strcmp(props[i].name,"FAMILY_NAME")==0 )
-		strcpy(family,props[i].value);
+	    if ( strcmp(props[i].name,"FAMILY_NAME")==0 ) {
+		strncpy(family,props[i].value,99);
+		family[99] = '\0';
+	    }
 	    else if ( strcmp(props[i].name,"WEIGHT_NAME")==0 )
 		strncpy(weight,props[i].value,sizeof(weight)-1);
-	    else if ( strcmp(props[i].name,"FULL_NAME")==0 )
-		strcpy(full,props[i].value);
+	    else if ( strcmp(props[i].name,"FULL_NAME")==0 ) {
+		strncpy(full,props[i].value,299);
+		full[299] = '\0';
+	    }
 	    else if ( strcmp(props[i].name,"SLANT")==0 )
 		strncpy(italic,props[i].value,sizeof(italic)-1);
 	    else if ( strcmp(props[i].name,"CHARSET_REGISTRY")==0 )
@@ -1508,7 +1530,7 @@ return(-2);
 		enc = strtol(props[i].value,NULL,10);
 	    else if ( strcmp(props[i].name,"FONT")==0 ) {
 		dummy->props[i].type = prt_atom;
-		if ( sscanf(props[i].value,"-%*[^-]-%[^-]-%[^-]-%[^-]-%*[^-]-",
+		if ( sscanf(props[i].value,"-%*[^-]-%99[^-]-%100[^-]-%100[^-]-%*[^-]-",
 			family, weight, italic )!=0 ) {
 		    for ( pt = props[i].value, dash_cnt=0; *pt && dash_cnt<7; ++pt )
 			if ( *pt=='-' ) ++dash_cnt;
@@ -1555,10 +1577,10 @@ return(-2);
 	strcpy(italic,"Oblique");
     else if ( strmatch(italic,"R")==0 )
 	strcpy(italic,"");		/* Ignore roman */
-    sprintf(mods,"%s%s", weight, italic );
+    snprintf(mods,200,"%s%s", weight, italic );	/* mods is char[200] in caller */
     if ( full[0]=='\0' ) {
 	if ( *mods )
-	    sprintf(full,"%s-%s", family, mods );
+	    snprintf(full,300,"%s-%s", family, mods );	/* full is char[300] */
 	else
 	    strcpy(full,family);
     }

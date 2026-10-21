@@ -3659,12 +3659,18 @@ SplineChar *PSCharStringToSplines(uint8_t *type1, int len, struct pscontext *con
 	if ( sp>48 ) {
 	    LogError( _("Stack got too big in %s"), name );
 	    sp = 48;
+	} else if ( sp<0 ) {
+	    sp = 0;
 	}
 	base = 0;
 	--len;
 	if ( (v = *type1++)>=32 ) {
 	    if ( v<=246) {
 		stack[sp++] = v - 139;
+	    } else if ( v<=254 && len<1 ) {
+		LogError(_("Not enough data: %d < 1"), len);
+		len = 0;
+		break;
 	    } else if ( v<=250 ) {
 		stack[sp++] = (v-247)*256 + *type1++ + 108;
 		--len;
@@ -3694,12 +3700,22 @@ SplineChar *PSCharStringToSplines(uint8_t *type1, int len, struct pscontext *con
 		}
 	    }
 	} else if ( v==28 ) {
+	    if ( len<2 ) {
+		LogError(_("Not enough data: %d < 2"), len);
+		len = 0;
+		break;
+	    }
 	    stack[sp++] = (short) ((type1[0]<<8) | type1[1]);
 	    type1 += 2;
 	    len -= 2;
 	/* In the Dict tables of CFF, a 5byte fixed value is prefixed by a */
 	/*  29 code. In Type2 strings the prefix is 255. */
 	} else if ( v==12 ) {
+	    if ( len<1 ) {
+		LogError(_("Not enough data: %d < 1"), len);
+		len = 0;
+		break;
+	    }
 	    old_last_was_b1 = last_was_b1; last_was_b1 = false;
 	    v = *type1++;
 	    --len;
@@ -3832,7 +3848,7 @@ SplineChar *PSCharStringToSplines(uint8_t *type1, int len, struct pscontext *con
 	      break;
 	      case 5: case 9: case 14: case 26:
 		if ( sp<1 ) LogError( _("Stack underflow on unary operator in %s"), name );
-		switch ( v ) {
+		else switch ( v ) {
 		  case 5: stack[sp-1] = (stack[sp-1]==0); break;	/* not */
 		  case 9: if ( stack[sp-1]<0 ) stack[sp-1]= -stack[sp-1]; break;	/* abs */
 		  case 14: stack[sp-1] = -stack[sp-1]; break;		/* neg */
@@ -3842,7 +3858,7 @@ SplineChar *PSCharStringToSplines(uint8_t *type1, int len, struct pscontext *con
 	      break;
 	      case 3: case 4: case 10: case 11: case 12: case 15: case 24:
 		if ( sp<2 ) LogError( _("Stack underflow on binary operator in %s"), name );
-		else switch ( v ) {
+		else { switch ( v ) {
 		  case 3: /* and */
 		    stack[sp-2] = (stack[sp-1]!=0 && stack[sp-2]!=0);
 		  break;
@@ -3868,6 +3884,7 @@ SplineChar *PSCharStringToSplines(uint8_t *type1, int len, struct pscontext *con
 		  break;
 		}
 		--sp;
+		}
 	      break;
 	      case 22: /* ifelse */
 		if ( sp<4 ) LogError( _("Stack underflow on ifelse in %s"), name );
@@ -3893,11 +3910,15 @@ SplineChar *PSCharStringToSplines(uint8_t *type1, int len, struct pscontext *con
 		if ( sp<2 || sp < 2+stack[sp-2] ) {
 		    LogError( _("Stack underflow on callothersubr in %s"), name );
 		    sp = 0;
+		} else if ( isnan(stack[sp-2]) || stack[sp-2]<0 || isnan(stack[sp-1]) ) {
+		    LogError( _("Bad argument count on callothersubr in %s"), name );
+		    sp = 0;
 		} else {
 		    int tot = stack[sp-2], i, k, j;
 		    popsp = 0;
 		    for ( k=sp-3; k>=sp-2-tot; --k )
-			pops[popsp++] = stack[k];
+			if ( popsp<(int) (sizeof(pops)/sizeof(pops[0])) )
+			    pops[popsp++] = stack[k];
 		    /* othersubrs 0-3 must be interpreted. 0-2 are Flex, 3 is Hint Replacement */
 		    /* othersubrs 12,13 are for counter hints. We don't need to */
 		    /*  do anything to ignore them */
@@ -4047,7 +4068,7 @@ SplineChar *PSCharStringToSplines(uint8_t *type1, int len, struct pscontext *con
 	      break;
 	      case 20: /* put */
 		if ( sp<2 ) LogError( _("Too few items on stack for put in %s"), name );
-		else if ( stack[sp-1]<0 || stack[sp-1]>=32 ) LogError( _("Reference to transient memory out of bounds in put in %s"), name );
+		else if ( isnan(stack[sp-1]) || stack[sp-1]<0 || stack[sp-1]>=32 ) LogError( _("Reference to transient memory out of bounds in put in %s"), name );
 		else {
 		    transient[(int)stack[sp-1]] = stack[sp-2];
 		    sp -= 2;
@@ -4055,7 +4076,7 @@ SplineChar *PSCharStringToSplines(uint8_t *type1, int len, struct pscontext *con
 	      break;
 	      case 21: /* get */
 		if ( sp<1 ) LogError( _("Too few items on stack for get in %s"), name );
-		else if ( stack[sp-1]<0 || stack[sp-1]>=32 ) LogError( _("Reference to transient memory out of bounds in put in %s"), name );
+		else if ( isnan(stack[sp-1]) || stack[sp-1]<0 || stack[sp-1]>=32 ) LogError( _("Reference to transient memory out of bounds in put in %s"), name );
 		else
 		    stack[sp-1] = transient[(int)stack[sp-1]];
 	      break;
@@ -4300,6 +4321,10 @@ SplineChar *PSCharStringToSplines(uint8_t *type1, int len, struct pscontext *con
 	    if ( v==19 || v==20 ) {		/* hintmask, cntrmask */
 		int bytes = (hint_cnt+7)/8;
 		if ( bytes>sizeof(HintMask) ) bytes = sizeof(HintMask);
+		if ( bytes>len ) {
+		    LogError(_("Not enough data: %d < %d"), len, bytes);
+		    bytes = len>0 ? len : 0;
+		}
 		if ( v==19 ) {
 		    ret->hstem = HintsAppend(ret->hstem,activeh); activeh=NULL;
 		    ret->vstem = HintsAppend(ret->vstem,activev); activev=NULL;
@@ -4311,7 +4336,7 @@ SplineChar *PSCharStringToSplines(uint8_t *type1, int len, struct pscontext *con
 		    memcpy(counters[cp],type1,bytes);
 		    ++cp;
 		}
-		if ( bytes!=hint_cnt/8 ) {
+		if ( bytes>0 && bytes!=hint_cnt/8 ) {
 		    int mask = 0xff>>(hint_cnt&7);
 		    if ( type1[bytes-1]&mask )
 			LogError( _("Hint mask (or counter mask) with too many hints in %s"), name );
@@ -4560,7 +4585,7 @@ SplineChar *PSCharStringToSplines(uint8_t *type1, int len, struct pscontext *con
 	    if ( s!=NULL ) stack[sp-1] += s->bias;
 	    /* Type2 subrs have a bias that must be added to the subr-number */
 	    /* Type1 subrs do not. We set the bias on them to 0 */
-	    if ( s==NULL || stack[sp-1]>=s->cnt || stack[sp-1]<0 ||
+	    if ( s==NULL || isnan(stack[sp-1]) || stack[sp-1]>=s->cnt || stack[sp-1]<0 ||
 		    s->values[(int) stack[sp-1]]==NULL )
 		LogError( _("Subroutine number out of bounds in %s"), name );
 	    else {
@@ -4586,7 +4611,8 @@ SplineChar *PSCharStringToSplines(uint8_t *type1, int len, struct pscontext *con
 	    int cnt,i,j;
 	    if ( context->instance_count==0 )
 		LogError( _("Attempt to use a multiple master subroutine in a non-mm font.") );
-	    else if ( sp<1 || sp<context->instance_count*stack[sp-1]+1 )
+	    else if ( sp<1 || isnan(stack[sp-1]) || stack[sp-1]<0 ||
+		    sp<context->instance_count*stack[sp-1]+1 )
 		LogError( _("Too few items on stack for blend in %s"), name );
 	    else {
 		if ( !context->blend_warn ) {
