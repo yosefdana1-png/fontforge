@@ -2009,6 +2009,10 @@ return(NULL);
 	rlen = getlong(f);
 	ch1 = getc(f); ch2 = getc(f);
 	rlen -= 2;	/* those two bytes don't count as real data */
+	if ( rlen<0 ) {
+	    LogError( _("Bad POST resource length") );
+	    rlen = 0;
+	}
 	if ( ch1==type )
 	    len += rlen;
 	else {

@@ -72,7 +72,7 @@ static void ttfreadbmfglyph(FILE *ttf,struct ttfinfo *info,
     struct bigmetrics big;
     int i,j,ch,l,p, num;
 
-    if ( gid>=bdf->glyphcnt )
+    if ( gid<0 || gid>=bdf->glyphcnt )
 return;
     if ( len==0 )		/* Missing, but encoded, glyph */
 return;
@@ -405,7 +405,7 @@ static void readttfbitmapfont(FILE *ttf,struct ttfinfo *info,
 	    if ( indexformat==3 && ((last-first)&1) )
 		getushort(ttf);
 	    for ( i=0; i<=last-first; ++i ) {
-		if ( info->inuse==NULL || info->inuse[i+first] )
+		if ( info->inuse==NULL || (i+first<info->glyph_cnt && info->inuse[i+first]) )
 		    ttfreadbmfglyph(ttf,info,offset+glyphoffsets[i],
 			    glyphoffsets[i+1]-glyphoffsets[i],NULL,
 			    imageformat,i+first,bdf);
@@ -423,7 +423,7 @@ static void readttfbitmapfont(FILE *ttf,struct ttfinfo *info,
 	    big.vbearingY = (signed char) getc(ttf);
 	    big.vadvance = getc(ttf);
 	    for ( i=first; i<=last; ++i ) {
-		if ( info->inuse==NULL || info->inuse[i] ) {
+		if ( info->inuse==NULL || (i<info->glyph_cnt && info->inuse[i]) ) {
 		    ttfreadbmfglyph(ttf,info,offset,
 			    size,&big,
 			    imageformat,i,bdf);
@@ -443,7 +443,8 @@ static void readttfbitmapfont(FILE *ttf,struct ttfinfo *info,
 		glyphoffsets[g] = getushort(ttf);
 	    }
 	    for ( i=0, g=0; i<=last-first; ++i, ++g ) {
-		if ( (info->inuse==NULL || info->inuse[i+first]) && g<num )
+		if ( g<num && (info->inuse==NULL ||
+			(glyphs[g]>=0 && glyphs[g]<info->glyph_cnt && info->inuse[glyphs[g]])) )
 		    ttfreadbmfglyph(ttf,info,offset+glyphoffsets[g],
 			    glyphoffsets[g+1]-glyphoffsets[g],NULL,
 			    imageformat,glyphs[g],bdf);
@@ -469,7 +470,8 @@ static void readttfbitmapfont(FILE *ttf,struct ttfinfo *info,
 	    if ( num&1 )
 		getushort(ttf);		/* padding */
 	    for ( i=first, g=0; i<=last; ++i, ++g ) {
-		if ( (info->inuse==NULL || info->inuse[i+first]) && g<num )
+		if ( g<num && (info->inuse==NULL ||
+			(glyphs[g]>=0 && glyphs[g]<info->glyph_cnt && info->inuse[glyphs[g]])) )
 		    ttfreadbmfglyph(ttf,info,offset,
 			    size,&big,
 			    imageformat,glyphs[g],bdf);

@@ -631,7 +631,13 @@ return;
 }
 
 static void AlterEntry(struct ttf_table *cvt, int i, int delta ) {
-    int val = memushort(cvt->data,cvt->len,2*i);
+    int val;
+
+    if ( i<0 || i>=(int) (cvt->len/2) ) {
+	LogError( _("cvar refers to a cvt entry (%d) beyond the end of the cvt table"), i );
+return;
+    }
+    val = memushort(cvt->data,cvt->len,2*i);
     memputshort(cvt->data,2*i,val+delta);
 }
 
@@ -666,11 +672,17 @@ static void VaryCvts(struct ttfinfo *info,int tupleIndex, int *points, FILE *ttf
     int *deltas;
     struct variations *v = info->variations;
 
+    if ( points==NULL ) {
+	LogError( _("Mismatched local and shared tuple flags.") );
+return;
+    }
     if ( points[0]==ALL_POINTS )
 	pcnt = origcvt->len/sizeof(uint16_t);
     else {
 	for ( pcnt=0; points[pcnt]!=END_OF_POINTS; ++pcnt );
     }
+    if ( pcnt==0 )
+return;
     deltas = readpackeddeltas(ttf,pcnt);
     if ( deltas[0]!=BAD_DELTA )
 	for ( tc = 0; tc<v->tuple_count; ++tc ) {

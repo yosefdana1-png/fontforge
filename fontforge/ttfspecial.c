@@ -1009,13 +1009,15 @@ return;			/* Bad version number */
 	grange[i].start = getushort(ttf);
 	grange[i].end = getushort(ttf);
 	grange[i].offset = getlong(ttf);
-	if ( grange[i].start>grange[i].end || grange[i].end>info->glyph_cnt ) {
+	if ( grange[i].start<0 || grange[i].start>grange[i].end || grange[i].end>=info->glyph_cnt ) {
 	    LogError( _("Bad glyph range specified in glyph comment subtable of PfEd table") );
 	    grange[i].start = 1; grange[i].end = 0;
 	}
     }
     for ( i=0; i<n; ++i ) {
 	for ( j=grange[i].start; j<=grange[i].end; ++j ) {
+	    if ( info->chars[j]==NULL )
+	continue;
 	    fseek( ttf,base+grange[i].offset+(j-grange[i].start)*sizeof(uint32_t),SEEK_SET);
 	    offset = getlong(ttf);
 	    next = getlong(ttf);
@@ -1043,11 +1045,12 @@ return;			/* Bad version number */
 	start = getushort(ttf);
 	end = getushort(ttf);
 	col = getlong(ttf);
-	if ( start>end || end>info->glyph_cnt )
+	if ( start<0 || start>end || end>=info->glyph_cnt )
 	    LogError( _("Bad glyph range specified in color subtable of PfEd table") );
 	else {
 	    for ( j=start; j<=end; ++j )
-		info->chars[j]->color = col;
+		if ( info->chars[j]!=NULL )
+		    info->chars[j]->color = col;
 	}
     }
 }
@@ -1319,8 +1322,9 @@ static void pfed_read_glyph_layer(FILE *ttf,struct ttfinfo *info,Layer *ly,
 	for ( j=0; j<6; ++j )
 	    cur->transform[j] = getlong(ttf)/32768.0;
 	gid = getushort(ttf);
-	if ( gid>=info->glyph_cnt ) {
+	if ( gid<0 || gid>=info->glyph_cnt || info->chars[gid]==NULL ) {
 	    LogError(_("Bad glyph reference in layer info."));
+	    RefCharFree(cur);
     break;
 	}
 	cur->sc = info->chars[gid];
@@ -1440,6 +1444,11 @@ static void pfed_read_layer(FILE *ttf,struct ttfinfo *info,int layer,int type, u
 	ranges[i].start  = getushort(ttf);
 	ranges[i].last   = getushort(ttf);
 	ranges[i].offset = getlong(ttf);
+	if ( ranges[i].start<0 || ranges[i].start>ranges[i].last ||
+		ranges[i].last>=info->glyph_cnt ) {
+	    LogError( _("Bad glyph range specified in layer subtable of PfEd table") );
+	    ranges[i].start = 1; ranges[i].last = 0;
+	}
     }
     for ( i=0; i<rcnt; ++i ) {
 	fseek(ttf,base+ranges[i].offset,SEEK_SET);
@@ -1448,6 +1457,8 @@ static void pfed_read_layer(FILE *ttf,struct ttfinfo *info,int layer,int type, u
 	for ( j=ranges[i].start; j<=ranges[i].last; ++j ) {
 	    Layer *ly;
 	    sc = info->chars[j];
+	    if ( sc==NULL )
+	continue;
 	    ly = &sc->layers[layer];
 	    if ( loca[j]!=0 )
 		pfed_read_glyph_layer(ttf,info,ly,base+loca[j],type,version);

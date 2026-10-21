@@ -2855,7 +2855,9 @@ static void skipcfft2thing(FILE *ttf) {
     LogError( _("FontForge does not support type2 programs embedded in CFF DICT INDICES.") );
     for (;;) {
 	ch = getc(ttf);
-	if ( ch>=247 && ch<=254 )
+	if ( ch==EOF )
+return;
+	else if ( ch>=247 && ch<=254 )
 	    getc(ttf);		/* Two byte number */
 	else if ( ch==255 ) {
 	    getc(ttf); getc(ttf); getc(ttf); getc(ttf);
@@ -3133,7 +3135,7 @@ static struct topdicts *readcfftopdict(FILE *ttf, char *fontname, int len,
 	    }
 	    td->nMasters = stack[0];
 	    td->nAxes = sp-4;
-	    memcpy(td->weightvector,stack+1,(sp-4)*sizeof(real));
+	    memcpy(td->weightvector,stack+1,(sp-4>17?17:sp-4)*sizeof(real));
 	    td->lenBuildCharArray = stack[sp-3];
 	    td->NormalizeDesignVector = stack[sp-2];	/* These are type2 charstrings, even in type1 fonts */
 	    td->ConvertDesignVector = stack[sp-1];
@@ -3415,8 +3417,15 @@ return;						/* Use cids instead */
 	if ( (format&0x7f)==0 ) {
             /* format 0 is a 1-1 map of glyph_id to code, starting with id 1 */
 	    cnt = getc(ttf);
-	    for ( i=1; i<=cnt && i<info->glyph_cnt; ++i )
-		map->map[getc(ttf)] = i;
+	    for ( i=1; i<=cnt && i<info->glyph_cnt; ++i ) {
+		int ch = getc(ttf);
+		if ( ch==EOF ) {
+		    LogError( _("Unexpected end of file in cff encoding") );
+		    info->bad_cff = true;
+	    break;
+		}
+		map->map[ch] = i;
+	    }
 	} else if ( (format&0x7f)==1 ) {
 	    cnt = getc(ttf);
             /* CFF encodings start with glyph_id 1 since 0 is always .notdef */
@@ -3445,7 +3454,7 @@ return;						/* Use cids instead */
 		dupenc = getc(ttf);
 		sid = getushort(ttf);
 		name = getstrid(sid,strings,scnt,info);
-		if ( name==NULL )	/* Table is erroneous */
+		if ( name==NULL || dupenc==EOF )	/* Table is erroneous */
 	    break;
 		for ( j=0; j<info->glyph_cnt; ++j )
 		    if ( strcmp(name,info->chars[j]->name)==0 )
@@ -3538,7 +3547,8 @@ static void readcffset(FILE *ttf,struct topdicts *dict,struct ttfinfo *info) {
 	for ( i=110; i<len && i<=346-217; ++i )
 	    dict->charset[i] = i+217;
     } else {
-	dict->charset = malloc(len*sizeof(uint16_t));
+	/* len may be 0 for an empty CharStrings INDEX; keep room for .notdef */
+	dict->charset = malloc((len<1?1:len)*sizeof(uint16_t));
 	dict->charset[0] = 0;		/* .notdef */
 	fseek(ttf,dict->cff_start+dict->charsetoff,SEEK_SET);
 	format = getc(ttf);
@@ -3861,6 +3871,14 @@ static void cidfigure(struct ttfinfo *info, struct topdicts *dict,
 
     for ( j=0; subdicts[j]!=NULL; ++j );
     info->subfontcnt = j;
+    for ( i=0; i<info->glyph_cnt; ++i ) {
+	if ( fdselect[i]>=info->subfontcnt ) {
+	    LogError( _("Bad fdselect: glyph %d refers to FD %d, but there are only %d"),
+		    i, fdselect[i], info->subfontcnt );
+	    info->bad_cff = true;
+	    fdselect[i] = 0;
+	}
+    }
     info->subfonts = calloc(j+1,sizeof(SplineFont *));
     for ( j=0; subdicts[j]!=NULL; ++j )  {
 	info->subfonts[j] = cffsffillup(subdicts[j],strings,scnt,info);
@@ -3952,6 +3970,11 @@ return( 0 );
     if ( hdrsize!=4 )
 	fseek(ttf,info->cff_start+hdrsize,SEEK_SET);
     fontnames = readcfffontnames(ttf,NULL,info);
+    if ( fontnames==NULL ) {
+	LogError( _("CFF font has no fonts in its name INDEX") );
+	info->bad_cff = true;
+return( 0 );
+    }
     which = 0;
     if ( fontnames[1]!=NULL ) {		/* More than one? Can that even happen in OpenType? */
 	which = PickCFFFont(fontnames);
@@ -3963,6 +3986,20 @@ return( 0 );
 	}
     }
     dicts = readcfftopdicts(ttf,fontnames,info->cff_start,info, NULL);
+    for ( i=0; dicts!=NULL && dicts[i]!=NULL; ++i );
+    if ( dicts==NULL || which<0 || which>=i ) {
+	LogError( _("CFF font has no top DICT for the selected font") );
+	info->bad_cff = true;
+	for ( i=0; fontnames[i]!=NULL; ++i )
+	    free(fontnames[i]);
+	free(fontnames);
+	if ( dicts!=NULL ) {
+	    for ( i=0; dicts[i]!=NULL; ++i )
+		TopDictFree(dicts[i]);
+	    free(dicts);
+	}
+return( 0 );
+    }
 	/* String index is just the same as fontname index */
     strings = readcfffontnames(ttf,&scnt,info);
     readcffsubrs(ttf,&gsubs,info );
@@ -4849,7 +4886,7 @@ return;
 		    /*  OpenType doesn't mention this */
 		    for ( j=startchars[i]; j<=endchars[i]; ++j ) {
 			int temp = (i-segCount+rangeOffset[i]/2) + j-startchars[i];
-			if ( temp<glyph_tot )
+			if ( temp>=0 && temp<glyph_tot )
 			    index = glyphs[ temp ];
 			else {
 			    /* This happened in mingliu.ttc(PMingLiU) */
@@ -4911,21 +4948,26 @@ return;
 	    /* Well, the docs say it's for 2byte encodings, but Apple actually*/
 	    /*  uses it for 1 byte encodings which don't fit into the require-*/
 	    /*  ments for a format 0 sub-table. See Zapfino.dfont */
-	    int first, count;
+	    int first, count, trans_max = 256;
 	    first = getushort(ttf);
 	    count = getushort(ttf);
 	    trans = enc->unicode;
+	    if ( trans!=NULL )
+		trans_max = enc->char_cnt;
 	    if ( trans==NULL && dcmap[dc].platform==1 && first+count<=256 )
 		trans = MacEncToUnicode(dcmap[dc].specific,dcmap[dc].lang-1);
 	    if ( justinuse==git_justinuse )
-		for ( i=0; i<count; ++i )
-		    info->inuse[getushort(ttf)]= 1;
+		for ( i=0; i<count; ++i ) {
+		    int gid = getushort(ttf);
+		    if ( gid>=0 && gid<info->glyph_cnt )
+			info->inuse[gid]= 1;
+		}
 	    else {
 		for ( i=0; i<count; ++i ) {
 		    int gid = getushort(ttf);
 		    if ( dounicode ) {
-			if ( gid<info->glyph_cnt ) {
-			    addttfencoding(info->chars[gid], trans!=NULL ? trans[first+i] : first+i);
+			if ( gid>=0 && gid<info->glyph_cnt && info->chars[gid]!=NULL ) {
+			    addttfencoding(info->chars[gid], trans!=NULL && first+i<trans_max ? trans[first+i] : first+i);
 			    if ( map!=NULL && first+i < map->enccount )
 				map->map[first+i] = gid;
 			} else
@@ -5030,16 +5072,31 @@ return;
 		start = getlong(ttf);
 		end = getlong(ttf);
 		startglyph = getlong(ttf);
-		if ( justinuse==git_justinuse )
+		if ( start>end || end>0x7fffffff ) {
+		    LogError( _("Bad font: Encoding data out of range.") );
+		    info->bad_cmap = true;
+	    continue;
+		}
+		if ( justinuse==git_justinuse ) {
 		    for ( i=start; i<=end; ++i )
-			info->inuse[startglyph+i-start]= 1;
-		else
+			if ( startglyph+i-start < info->glyph_cnt )
+			    info->inuse[startglyph+i-start]= 1;
+			else
+		    break;
+		} else
 		    for ( i=start; i<=end; ++i ) {
 			int uenc = ((i>>16)-0xd800)*0x400 + (i&0xffff)-0xdc00 + 0x10000;
+			if ( startglyph+i-start >= info->glyph_cnt ||
+				info->chars[startglyph+i-start]==NULL ||
+				uenc<0 || uenc>0x10ffff ) {
+			    LogError( _("Bad font: Encoding data out of range.") );
+			    info->bad_cmap = true;
+		    break;
+			}
 			sc = info->chars[startglyph+i-start];
 			if ( dounicode )
 			    addttfencoding(sc, uenc);
-			if ( map!=NULL && sc->unicodeenc < map->enccount )
+			if ( map!=NULL && uenc < map->enccount )
 			    map->map[uenc] = startglyph+i-start;
 		    }
 	    }
@@ -5052,12 +5109,25 @@ return;
 	    }
 	    first = getlong(ttf);
 	    count = getlong(ttf);
+	    if ( first<0 || count<0 || first>0x10ffff || count>0x10ffff ) {
+		LogError( _("Bad font: Encoding data out of range.") );
+		info->bad_cmap = true;
+		count = 0;
+	    }
 	    if ( justinuse==git_justinuse )
-		for ( i=0; i<count; ++i )
-		    info->inuse[getushort(ttf)]= 1;
-	    else
-		for ( i=0; i<count; ++i ) {
+		for ( i=0; i<count && !feof(ttf); ++i ) {
 		    int gid = getushort(ttf);
+		    if ( gid>=0 && gid<info->glyph_cnt )
+			info->inuse[gid]= 1;
+		}
+	    else
+		for ( i=0; i<count && !feof(ttf); ++i ) {
+		    int gid = getushort(ttf);
+		    if ( gid<0 || gid>=info->glyph_cnt || info->chars[gid]==NULL ) {
+			LogError( _("Bad font: Encoding data out of range.") );
+			info->bad_cmap = true;
+		continue;
+		    }
 		    if ( dounicode )
 			addttfencoding(info->chars[gid], first+i);
 		    if ( map!=NULL && first+i < map->enccount )
@@ -5074,6 +5144,11 @@ return;
 		start = getlong(ttf);
 		end = getlong(ttf);
 		startglyph = getlong(ttf);
+		if ( start>end || end>0x10ffff ) {
+		    LogError( _("Bad font: Encoding data out of range.") );
+		    info->bad_cmap = true;
+	    continue;
+		}
 		if ( justinuse==git_justinuse ) {
 		    for ( i=start; i<=end; ++i )
 			if ( startglyph+i-start < info->glyph_cnt )
