@@ -164,7 +164,7 @@ static SplineChar* getSelectedChar( MetricsView* mv ) {
     int i=0;
     for ( i=0; i<mv->glyphcnt; ++i ) {
 	if ( mv->perchar[i].selected ) {
-	    return mv->chars[i];
+	    return mv->glyphs[i].sc;
 	}
     }
     if( mv->glyphcnt==1 ) {
@@ -5193,7 +5193,8 @@ MetricsView *MetricsViewCreate(FontView *fv,SplineChar *sc,BDFFont *bdf) {
     // https://docs.microsoft.com/en-us/typography/opentype/spec/recom#post-table
 #define MAXGLYPHNAME_LEN 31
     unsigned int selectmax = fvmv_selectmax < 0 ? fv->b.sf->glyphcnt : fvmv_selectmax;
-    char *buf = malloc(selectmax * (MAXGLYPHNAME_LEN + 1) + 1);
+    char *buf;
+    size_t buflen;
     char *pt;
     GTextInfo label;
     int i,j,cnt;
@@ -5266,7 +5267,8 @@ MetricsView *MetricsViewCreate(FontView *fv,SplineChar *sc,BDFFont *bdf) {
     GDrawWindowFontMetrics(gw,mv->font,&as,&ds,&ld);
     mv->fh = as+ds; mv->as = as;
 
-    pt = buf;
+    if ( selectmax<1 )
+	selectmax = 1;		/* There is always room for sc */
     // +1 because mv->chars is 0 terminated
     mv->chars = calloc(mv->cmax=selectmax+1,sizeof(SplineChar *));
     if ( sc!=NULL ) {
@@ -5284,6 +5286,11 @@ MetricsView *MetricsViewCreate(FontView *fv,SplineChar *sc,BDFFont *bdf) {
     }
     mv->chars[mv->clen] = NULL;
 
+    /* Glyph names may be longer than MAXGLYPHNAME_LEN, size the buffer from them */
+    buflen = 1;
+    for ( cnt=0; cnt<mv->clen; ++cnt )
+	buflen += (MAXGLYPHNAME_LEN + 1) + strlen(mv->chars[cnt]->name) + 1;
+    pt = buf = malloc(buflen);
     for ( cnt=0; cnt<mv->clen; ++cnt ) {
         int cp = mv->chars[cnt]->unicodeenc;
         static const unichar_t metricsview_tokens[] = {'#', '[', ']', '/', '\\', '\0'};

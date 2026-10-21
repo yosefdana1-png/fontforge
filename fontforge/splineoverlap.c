@@ -2175,7 +2175,9 @@ static Intersection *TurnPreInter2Inter(Monotonic *ms) {
 		if ( m2 != NULL )
 		    p->t2 = m2->tstart;
 	    }
-	    if ( p->is_close )
+	    if ( m1 == NULL || m2 == NULL )
+		/* Could not find the monotonics, drop this intersection rather than crash */;
+	    else if ( p->is_close )
 		ilist = AddCloseIntersection(ilist,m1,m2,p->t1,p->t2,&p->inter);
 	    else
 		ilist = AddIntersection(ilist,m1,m2,p->t1,p->t2,&p->inter);

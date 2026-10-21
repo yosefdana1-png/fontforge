@@ -1052,7 +1052,7 @@ static void RemoveJSTFReferences(SplineFont *sf,OTLookup *dying) {
     }
 }
 
-static void RemoveNestedReferences(SplineFont *sf,int isgpos) {
+static void RemoveNestedReferences(SplineFont *sf,int isgpos,OTLookup *dying) {
     OTLookup *otl;
     struct lookup_subtable *sub;
     int i,j,k;
@@ -1064,9 +1064,9 @@ static void RemoveNestedReferences(SplineFont *sf,int isgpos) {
 		if ( sm->type==asm_context ) {
 		    for ( i=0; i<sm->state_cnt*sm->class_cnt; ++i ) {
 			struct asm_state *state = &sm->state[i];
-			if ( state->u.context.mark_lookup == otl )
+			if ( state->u.context.mark_lookup == dying )
 			    state->u.context.mark_lookup = NULL;
-			if ( state->u.context.cur_lookup == otl )
+			if ( state->u.context.cur_lookup == dying )
 			    state->u.context.cur_lookup = NULL;
 		    }
 		}
@@ -1082,7 +1082,7 @@ static void RemoveNestedReferences(SplineFont *sf,int isgpos) {
 		if (fpst!=NULL) {
 		    for ( i=0; i<fpst->rule_cnt; ++i ) {
 			for ( j=0; j<fpst->rules[i].lookup_cnt; ++j ) {
-			    if ( fpst->rules[i].lookups[j].lookup == otl ) {
+			    if ( fpst->rules[i].lookups[j].lookup == dying ) {
 				for ( k=j+1; k<fpst->rules[i].lookup_cnt; ++k )
 				    fpst->rules[i].lookups[k-1] = fpst->rules[i].lookups[k];
 				--fpst->rules[i].lookup_cnt;
@@ -1118,13 +1118,13 @@ void SFRemoveUnusedLookupSubTables(SplineFont *sf,
 		if ( acprev==NULL )
 		    sf->anchor = acnext;
 		else
-		    acprev = acnext;
+		    acprev->next = acnext;
 	    }
 	}
     }
 
     for ( gpos=0; gpos<2; ++gpos ) {
-	for ( otl = gpos ? sf->gpos_lookups : sf->gsub_lookups; otl!=NULL; otlprev = otl, otl = otlnext ) {
+	for ( otlprev = NULL, otl = gpos ? sf->gpos_lookups : sf->gsub_lookups; otl!=NULL; otl = otlnext ) {
 	    otlnext = otl->next;
 	    if ( remove_unused_lookups && (otl->empty ||
 		    (otl->unused && remove_incomplete_anchorclasses)) ) {
@@ -1134,9 +1134,11 @@ void SFRemoveUnusedLookupSubTables(SplineFont *sf,
 		    sf->gpos_lookups = otlnext;
 		else
 		    sf->gsub_lookups = otlnext;
-		RemoveNestedReferences(sf,gpos);
+		RemoveNestedReferences(sf,gpos,otl);
+		otl->next = NULL;
 		OTLookupFree(otl);
 	    } else {
+		otlprev = otl;
 		for ( prev=NULL, sub=otl->subtables; sub!=NULL; sub=subnext ) {
 		    subnext = sub->next;
 		    if ( sub->unused &&
@@ -1291,7 +1293,7 @@ void SFRemoveLookup(SplineFont *sf,OTLookup *otl,int remove_acs) {
     else
 	sf->gsub_lookups = otl->next;
 
-    RemoveNestedReferences(sf,isgpos);
+    RemoveNestedReferences(sf,isgpos,otl);
     RemoveJSTFReferences(sf,otl);
 
     otl->next = NULL;
@@ -2977,6 +2979,8 @@ return( 0 );
     cnt = i;
     if ( i==0 )
 return( 0 );
+    if ( ipos>data->cnt )
+	ipos = data->cnt;		/* Can't insert after the end of text */
     for ( i= data->cnt; i>=ipos; --i )
 	data->str[i+cnt] = data->str[i];
     memset(data->str+ipos,0,cnt*sizeof(struct opentype_str));
@@ -2984,6 +2988,7 @@ return( 0 );
 	data->str[ipos+i].sc = inserts[i];
 	data->str[ipos+i].orig_index = orig_index;
     }
+    data->cnt += cnt;
 return( cnt );
 }
 
@@ -2994,6 +2999,7 @@ static void ApplyAppleStateMachine(OTLookup *otl,struct lookup_data *data) {
     int cnt_cur, cnt_mark;
     struct asm_state *entry;
     int kern_stack[8], kcnt;		/* Kerning state machines handle at most 8 glyphs */
+    int steps, maxsteps;
     /* Flaws: Line processing has not been done yet, so we are never in the */
     /*  start of line state and we never get an end of line token. We never */
     /*  get deleted tokens either, those glyphs are just gone */
@@ -3010,7 +3016,16 @@ static void ApplyAppleStateMachine(OTLookup *otl,struct lookup_data *data) {
 
 	state = 0;
 	mark_pos = markend_pos = -1;
+	kcnt = 0;
+	/* A state that does not advance (or keeps inserting at the end) */
+	/*  would loop forever, so give up after a generous number of steps */
+	steps = 0;
+	maxsteps = 10*data->cnt + 1000;
 	for ( pos = 0; pos<=data->cnt; ) {
+	    if ( ++steps>maxsteps ) {
+		LogError( _("Apple state machine in lookup %s does not terminate"), otl->lookup_name );
+		break;
+	    }
 	    if ( pos==data->cnt )
 		class = 0;
 	    else {
@@ -3023,9 +3038,10 @@ static void ApplyAppleStateMachine(OTLookup *otl,struct lookup_data *data) {
 	    entry = &sm->state[state*sm->class_cnt+class];
 	    switch ( otl->lookup_type ) {
 	      case morx_context:
-		if ( entry->u.context.cur_lookup!=NULL )
+		/* There is no glyph at pos==data->cnt (end of text) */
+		if ( entry->u.context.cur_lookup!=NULL && pos<data->cnt )
 		    ApplyLookupAtPos(0,entry->u.context.cur_lookup,data,pos);
-		if ( entry->u.context.mark_lookup!=NULL && mark_pos!=-1 ) {
+		if ( entry->u.context.mark_lookup!=NULL && mark_pos!=-1 && mark_pos<data->cnt ) {
 		    ApplyLookupAtPos(0,entry->u.context.mark_lookup,data,mark_pos);
 		    mark_pos = -1;
 		}

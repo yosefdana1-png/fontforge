@@ -1675,12 +1675,17 @@ void FVMetricsCenter(FontViewBase *fv,int docenter) {
 	    }
 	}
     } else {
-	double scale = (fv->sf->ascent+fv->sf->descent)/(double) (fv->active_bitmap->pixelsize);
+	double scale;
+	if ( fv->active_bitmap==NULL )
+return;
+	scale = (fv->sf->ascent+fv->sf->descent)/(double) (fv->active_bitmap->pixelsize);
 	for ( i=0; i<fv->map->enccount; ++i ) {
 	    if ( fv->selected[i] && (gid=fv->map->map[i])!=-1 &&
 		    fv->sf->glyphs[gid]!=NULL ) {
-		BDFChar *bc = fv->active_bitmap->glyphs[gid];
+		BDFChar *bc = gid<fv->active_bitmap->glyphcnt ? fv->active_bitmap->glyphs[gid] : NULL;
 		if ( bc==NULL ) bc = BDFMakeChar(fv->active_bitmap,fv->map,i);
+		if ( bc==NULL )
+	continue;
 		BDFCharFindBounds(bc,&ib);
 		if ( docenter )
 		    transform[4] = scale * ((bc->width-(ib.maxx-ib.minx))/2 - ib.minx);

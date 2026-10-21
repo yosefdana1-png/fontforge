@@ -1149,6 +1149,7 @@ void FVRemoveKerns(FontViewBase *fv) {
     }
     if ( changed ) {
 	sf->changed = true;
+	MVReFeatureAll(sf);		/* Metrics views may point to a freed subtable */
 	MVReKernAll(fv->sf);
     }
 }
@@ -1170,6 +1171,7 @@ void FVRemoveVKerns(FontViewBase *fv) {
     }
     if ( changed ) {
 	fv->sf->changed = true;
+	MVReFeatureAll(sf);		/* Metrics views may point to a freed subtable */
 	MVReKernAll(fv->sf);
     }
 }

@@ -470,6 +470,13 @@ static const char *NOUI_getFontForgeShareDir(void) {
 static void DefaultEncoding(void) {
     const char* charset = NULL;
     bool is_utf8 = ff_get_charset(&charset);
+#ifdef __APPLE__
+    /* macOS file names are always UTF-8, whatever the locale says. Apps */
+    /*  started from the Finder get no LANG, which would otherwise make */
+    /*  every non-ASCII path (e.g. Hebrew folder names) fail to open */
+    charset = "UTF-8";
+    is_utf8 = true;
+#endif
 
     if (!SetupUCharMap(FindUnicharName(), charset, is_utf8)) {
         fprintf(stderr, "Failed to set up unichar<->system local encoding, assuming utf-8 and trying again...\n");

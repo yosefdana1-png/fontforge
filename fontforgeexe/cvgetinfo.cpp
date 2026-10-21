@@ -1781,6 +1781,45 @@ static void PI_Close(GIData *d) {
     PI_Destroy((struct dlistnode *)d);
 }
 
+static int PI_SplineSetHasPoint(SplineSet *spl, SplineSet *curspl, SplinePoint *cursp) {
+    SplinePoint *sp;
+
+    for ( ; spl!=NULL; spl=spl->next ) {
+	if ( spl!=curspl )
+    continue;
+	for ( sp=spl->first; sp!=NULL; ) {
+	    if ( sp==cursp )
+return( true );
+	    if ( sp->next==NULL )
+	break;
+	    sp = sp->next->to;
+	    if ( sp==spl->first )
+	break;
+	}
+    }
+return( false );
+}
+
+/* The point info dialog is not modal. If the point it refers to has been */
+/*  deleted (or undone away) then close the dialog rather than use a */
+/*  dangling pointer */
+void PI_CheckPointExists(struct dlistnode *node) {
+    GIData *d = (GIData *)node;
+    SplineChar *sc = d->cv->b.sc;
+    int i;
+
+    if ( d->sc==sc ) {
+	for ( i=0; i<sc->layer_cnt; ++i )
+	    if ( PI_SplineSetHasPoint(sc->layers[i].splines,d->curspl,d->cursp) )
+return;
+	if ( PI_SplineSetHasPoint(d->cv->b.layerheads[dm_grid]->splines,d->curspl,d->cursp) )
+return;
+    }
+    SplinePointListsFree(d->oldstate);
+    d->oldstate = NULL;
+    PI_Destroy(node);
+}
+
 static int PI_Cancel(GGadget *g, GEvent *e) {
     if ( e->type==et_controlevent && e->u.control.subtype == et_buttonactivate ) {
 	GIData *d = (GIData *)GDrawGetUserData(GGadgetGetWindow(g));

@@ -2329,6 +2329,11 @@ static void KCD_DeleteClass(GGadget *g,int whichclass) {
     int is_first = GGadgetGetCid(g) == CID_ClassList;
     int i,j;
 
+    /* Store any pending edit while the old indices are still valid, then */
+    /*  forget them as they will be meaningless once the class is gone */
+    KCD_Finalize(kcd);
+    kcd->old_pos = kcd->st_pos = -1;
+
     (void) GMatrixEditGet(g,&rows);
     if ( is_first ) {
 	for ( i=0; i<kcd->second_cnt; ++i ) {
@@ -2352,7 +2357,8 @@ static void KCD_DeleteClass(GGadget *g,int whichclass) {
 	// Group kerning.
 	kcd->offsets = realloc(kcd->offsets, (kcd->first_cnt-1)*kcd->second_cnt*sizeof(int16_t));
 	kcd->adjusts = realloc(kcd->adjusts, (kcd->first_cnt-1)*kcd->second_cnt*sizeof(DeviceTable));
-	kcd->offsets_flags = realloc(kcd->offsets_flags, (kcd->first_cnt-1)*kcd->second_cnt*sizeof(int));
+	if (kcd->offsets_flags != NULL)
+	  kcd->offsets_flags = realloc(kcd->offsets_flags, (kcd->first_cnt-1)*kcd->second_cnt*sizeof(int));
 	if (kcd->firsts_names) {
 	  memmove(kcd->firsts_names+whichclass, kcd->firsts_names+whichclass + 1, (kcd->first_cnt - whichclass - 1) * sizeof(char*));
 	  kcd->firsts_names = realloc(kcd->firsts_names, (kcd->first_cnt - 1) * sizeof(char*));
@@ -3203,6 +3209,7 @@ static int KCL_Delete(GGadget *g, GEvent *e) {
 		++j;
 		p = kc;
 	    } else {
+		struct lookup_subtable *sub = kc->subtable;
 		if ( p!=NULL )
 		    p->next = n;
 		else if ( kcld->isv )
@@ -3213,9 +3220,19 @@ static int KCL_Delete(GGadget *g, GEvent *e) {
 		for ( kcd=kcld->sf->kcd; kcd!=NULL && kcd->orig!=kc; kcd=kcd->next );
 		if ( kcd!=NULL )
 		    KC_DoCancel(kcd);
+		/* The lookup subtable still points to the kern class. We have */
+		/*  already unlinked kc, so detach it and remove the subtable too */
+		/*  (unless Font Info is open: it keeps its own pointers to the */
+		/*  subtables, so there we leave an empty kerning subtable behind) */
+		if ( sub!=NULL ) {
+		    sub->kc = NULL;
+		    if ( kcld->sf->fontinfo==NULL )
+			SFRemoveLookupSubTable(kcld->sf,sub,false);
+		}
 		KernClassListFree(kc);
 	    }
 	}
+	MVReFeatureAll(kcld->sf);
 	new[j] = calloc(1,sizeof(GTextInfo));
 	GGadgetSetList(list,new,false);
 	GGadgetSetEnabled(GWidgetGetControl(GGadgetGetWindow(g),CID_Delete),false);

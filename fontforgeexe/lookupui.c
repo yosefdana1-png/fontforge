@@ -3548,7 +3548,7 @@ static void PSTKD_DoPopulate(PSTKernDlg *pstkd,char *suffix, enum pop_type pt) {
     int enc;
     SplineFont *sf = pstkd->sf;
     FontView *fv = (FontView *) sf->fv;
-    EncMap *map = fv->b.map;
+    EncMap *map = fv!=NULL ? fv->b.map : NULL;
     GGadget *gallsame = GWidgetGetControl(pstkd->gw,CID_AllSame);
     int allsame = false;
     FeatureScriptLangList *features = pstkd->sub->lookup->features;
@@ -3565,7 +3565,7 @@ static void PSTKD_DoPopulate(PSTKernDlg *pstkd,char *suffix, enum pop_type pt) {
 	    if ( SCReasonable(sc = sf->glyphs[gid]) &&
 		    (pt==pt_selected || ScriptInFeatureScriptList(SCScriptFromUnicode(sc),
 			    features)) &&
-		    (pt!=pt_selected || (gid<fv->b.sf->glyphcnt &&
+		    (pt!=pt_selected || (map!=NULL && gid<map->backmax &&
 			    (enc = map->backmap[gid])!=-1 &&
 			    fv->b.selected[enc])) &&
 		    (pos = SCNameUnused(sc->name,old,old_rows,cols))!=-1 &&
